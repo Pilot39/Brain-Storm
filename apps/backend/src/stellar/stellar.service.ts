@@ -333,6 +333,28 @@ export class StellarService {
     }
   }
 
+  async verifyTransaction(txHash: string): Promise<{
+    verified: boolean;
+    hash: string;
+    ledger?: number;
+    createdAt?: string;
+    operationCount?: number;
+  }> {
+    try {
+      const tx = await this.server.transactions().transaction(txHash).call();
+      return {
+        verified: tx.successful,
+        hash: tx.hash,
+        ledger: tx.ledger_attr,
+        createdAt: tx.created_at,
+        operationCount: tx.operation_count,
+      };
+    } catch (error) {
+      this.logger.warn(`Transaction verification failed for ${txHash}: ${error.message}`);
+      return { verified: false, hash: txHash };
+    }
+  }
+
   async getTransactionLogs(filters?: {
     recipientPublicKey?: string;
     type?: StellarTxType;

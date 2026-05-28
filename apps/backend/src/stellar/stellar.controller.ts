@@ -51,6 +51,15 @@ export class StellarController {
     return this.stellarService.issueCredential(body.recipientPublicKey, body.courseId);
   }
 
+  @Get('transactions/verify/:txHash')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Verify a Stellar transaction by hash' })
+  @ApiResponse({ status: 200, description: 'Transaction verification result' })
+  verifyTransaction(@Param('txHash') txHash: string) {
+    return this.stellarService.verifyTransaction(txHash);
+  }
+
   @Get('transactions')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('admin')
