@@ -1,74 +1,79 @@
 # @brain-storm/types
 
-Shared TypeScript types, DTOs and interfaces for the Brain-Storm platform.
-
-This package is the single source of truth for all data shapes exchanged between the frontend and backend. It eliminates type drift and ensures both apps stay in sync.
-
-## Contents
-
-| Module | Description |
-|---|---|
-| `common.types` | Pagination, API response wrappers, utility types |
-| `course.types` | Course DTOs, query params, levels, statuses |
-| `enrollment.types` | Enrollment records, progress DTOs |
-| `notification.types` | Notification types and payloads |
-| `quiz.types` | Quiz, question, answer, attempt types |
-| `stellar.types` | Wallet, credential, Stellar-specific types |
-| `user.types` | User profile, auth DTOs, JWT payload |
+Shared TypeScript types, DTOs, and interfaces for the Brain-Storm platform.
 
 ## Usage
 
-```ts
+```typescript
 import type {
-  CreateCourseDto,
-  UpdateUserDto,
-  PaginatedResponse,
   UserProfile,
-  RecordProgressDto,
+  CreateCourseDto,
+  PaginatedResponse,
+  AppErrorResponse,
 } from '@brain-storm/types';
 ```
 
-## Adding to a workspace app
+## Type Categories
 
-In `apps/backend/package.json` or `apps/frontend/package.json`:
+### API Types (`api.types.ts`)
+- `PaginatedResponse<T>` - Paginated API responses
+- `ApiResponse<T>` - Standard API response wrapper
+- `QueryOptions` - Common query parameters
 
-```json
-{
-  "dependencies": {
-    "@brain-storm/types": "*"
-  }
+### Error Types (`error.types.ts`)
+- `ErrorCode` - Standardized error codes
+- `AppErrorResponse` - Error response format
+- `ValidationErrorDetail` - Validation error details
+
+### User Types (`user.types.ts`)
+- `UserProfile` - User profile information
+- `CreateUserDto` - User creation DTO
+
+### Course Types (`course.types.ts`)
+- `CourseDto` - Course information
+- `CreateCourseDto` - Course creation DTO
+- `CourseModule` - Course module structure
+
+### Enrollment Types (`enrollment.types.ts`)
+- `EnrollmentDto` - Enrollment information
+- `EnrollmentStatus` - Enrollment status enum
+
+### Quiz Types (`quiz.types.ts`)
+- `QuizDto` - Quiz information
+- `QuizAttempt` - Quiz attempt data
+
+### Notification Types (`notification.types.ts`)
+- `NotificationDto` - Notification information
+- `NotificationPreference` - User notification preferences
+
+### Stellar Types (`stellar.types.ts`)
+- `StellarAccount` - Stellar account information
+- `TransactionDetails` - Transaction details
+
+### Common Types (`common.types.ts`)
+- `Pagination` - Pagination parameters
+- `SortOrder` - Sort order enum
+
+## Validation
+
+All DTOs should include validation decorators:
+
+```typescript
+import { IsEmail, IsNotEmpty } from 'class-validator';
+
+export class CreateUserDto {
+  @IsEmail()
+  email: string;
+
+  @IsNotEmpty()
+  name: string;
 }
 ```
 
-Then run `npm install` from the repo root.
+## Contributing
 
-## Type Generation from OpenAPI
-
-To regenerate types from the backend OpenAPI spec:
-
-```bash
-# Export the OpenAPI spec from the backend
-npm run export:openapi --workspace=apps/backend
-
-# Generate types (requires openapi-typescript)
-npx openapi-typescript openapi.json -o packages/types/src/generated.types.ts
-```
-
-## Type Usage Patterns
-
-### Backend (NestJS)
-
-```ts
-import type { CreateCourseDto } from '@brain-storm/types';
-
-@Post()
-create(@Body() dto: CreateCourseDto) { ... }
-```
-
-### Frontend (Next.js)
-
-```ts
-import type { CourseSummary, PaginatedResponse } from '@brain-storm/types';
-
-const { data } = useSWR<PaginatedResponse<CourseSummary>>('/api/courses');
-```
+When adding new types:
+1. Create a new file: `src/[feature].types.ts`
+2. Export from `src/index.ts`
+3. Update this README
+4. Add JSDoc comments for complex types

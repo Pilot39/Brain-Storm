@@ -10,9 +10,11 @@
  * ```
  */
 
+export * from './api.types';
 export * from './common.types';
 export * from './course.types';
 export * from './enrollment.types';
+export * from './error.types';
 export * from './notification.types';
 export * from './quiz.types';
 export * from './stellar.types';
