@@ -1,133 +1,49 @@
 # Test Data Management
 
 ## Overview
+Centralized test data generation and management using factories and seeders.
 
-Brain-Storm provides factories and utilities for generating and managing test data consistently across the test suite.
-
-## Test Data Factories
-
-### UserFactory
-
-Generate test users with realistic data:
+## Factories
+Located in `apps/backend/tests/factories/`:
 
 ```typescript
-import { UserFactory } from '@/test/factories';
+import { UserFactory, CourseFactory, EnrollmentFactory } from '@/tests/factories';
 
-// Create single user
-const user = UserFactory.create();
+// Single entity
+const user = UserFactory.create({ role: 'admin' });
 
-// Create with overrides
-const admin = UserFactory.create({ role: 'admin' });
+// Multiple entities
+const users = UserFactory.createMany(5);
 
-// Create multiple users
-const users = UserFactory.createMany(10);
+// With overrides
+const course = CourseFactory.create({ title: 'Advanced Rust' });
 ```
 
-### CourseFactory
-
-Generate test courses:
+## Seeding
+Use `TestDataSeeder` for test setup:
 
 ```typescript
-import { CourseFactory } from '@/test/factories';
-
-const course = CourseFactory.create({
-  title: 'Advanced Blockchain',
-  instructorId: 'user-123',
-});
-
-const courses = CourseFactory.createMany(5);
+const seeder = new TestDataSeeder(dataSource);
+const users = await seeder.seedUsers(10);
+const courses = await seeder.seedCourses(5);
+await seeder.seedEnrollments(userIds, courseIds);
 ```
 
-### EnrollmentFactory
-
-Generate test enrollments:
-
-```typescript
-import { EnrollmentFactory } from '@/test/factories';
-
-const enrollment = EnrollmentFactory.create({
-  userId: 'user-1',
-  courseId: 'course-1',
-  progress: 75,
-});
-```
-
-### QuizFactory
-
-Generate test quizzes:
-
-```typescript
-import { QuizFactory } from '@/test/factories';
-
-const quiz = QuizFactory.create({
-  courseId: 'course-1',
-  questions: 10,
-});
-```
-
-## Test Data Manager
-
-Manage database state during tests:
-
-```typescript
-import { TestDataManager } from '@/test/test-data.manager';
-
-describe('Course Service', () => {
-  let dataManager: TestDataManager;
-
-  beforeAll(async () => {
-    dataManager = new TestDataManager(dataSource);
-    await dataManager.seedDatabase();
-  });
-
-  afterEach(async () => {
-    await dataManager.cleanDatabase();
-  });
-
-  it('should fetch courses', async () => {
-    // Test with seeded data
-  });
-});
-```
-
-## Seeding Test Data
-
-### Manual Seeding
-
-```bash
-npm run seed:test
-```
-
-### CI/CD Integration
-
-Test data is automatically seeded in CI pipelines before running integration tests.
-
-## Data Cleanup
-
-Always clean up test data after tests:
+## Cleanup
+Always cleanup after tests:
 
 ```typescript
 afterEach(async () => {
-  await dataManager.cleanDatabase();
+  await seeder.cleanup();
 });
 ```
 
 ## Versioning
-
-Test data versions are tracked in `.test-data-version`:
-
-```
-1.0.0 - Initial test data schema
-1.1.0 - Added quiz data
-1.2.0 - Added enrollment progress tracking
-```
-
-Update version when modifying test data structure.
+Test data factories are versioned with the codebase. Update factories when schema changes.
 
 ## Best Practices
-
-1. **Use factories** - Always use factories instead of hardcoding test data
-2. **Clean up** - Clean database after each test
-3. **Isolate tests** - Each test should be independent
-4. **Use overrides** - Customize factory data with overrides
-5. **Document** - Document custom test data requirements
+- Use factories for all test data
+- Keep factories simple and focused
+- Override only necessary fields
+- Cleanup after each test
+- Commit factory changes with schema migrations
