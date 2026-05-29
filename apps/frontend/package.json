@@ -16,6 +16,8 @@
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
     "test:e2e:ci": "playwright test --reporter=github",
+    "test:visual": "playwright test --config=playwright-visual.config.ts",
+    "test:visual:update": "playwright test --config=playwright-visual.config.ts --update-snapshots",
     "test:pact": "vitest run --include '**/*.pact.test.ts'",
     "storybook": "storybook dev -p 6006",
     "build-storybook": "storybook build",
