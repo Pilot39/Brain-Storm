@@ -1,20 +1,22 @@
-import { Module } from '@nestjs/common';
+import { Module, NestModule, MiddlewareConsumer, RequestMethod } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { CacheModule } from '@nestjs/cache-manager';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { APP_GUARD } from '@nestjs/core';
+import * as redisStore from 'cache-manager-redis-store';
 import { AuthModule } from './auth/auth.module';
 import { CoursesModule } from './courses/courses.module';
 import { UsersModule } from './users/users.module';
 import { StellarModule } from './stellar/stellar.module';
 import { NotificationsModule } from './notifications/notifications.module';
-import * as redisStore from 'cache-manager-redis-store';
+import { FeatureFlagsModule } from './feature-flags/feature-flags.module';
+import { IdempotencyMiddleware } from './common/middleware/idempotency.middleware';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
-    ThrottlerModule.forRoot([{ ttl: 60000, limit: 60 }]), // global: 60 req/min default
+    ThrottlerModule.forRoot([{ ttl: 60000, limit: 60 }]),
     TypeOrmModule.forRoot({
       type: 'postgres',
       host: process.env.DATABASE_HOST || 'localhost',
@@ -52,13 +54,18 @@ import * as redisStore from 'cache-manager-redis-store';
     UsersModule,
     StellarModule,
     NotificationsModule,
-  ],
-  providers: [
-    {
-      provide: APP_GUARD,
-      useClass: ThrottlerGuard,
-    },
+    FeatureFlagsModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    // Apply idempotency to mutating endpoints
+    consumer
+      .apply(IdempotencyMiddleware)
+      .forRoutes(
+        { path: 'enrollments*', method: RequestMethod.POST },
+        { path: 'stellar*', method: RequestMethod.POST },
+      );
+  }
+}

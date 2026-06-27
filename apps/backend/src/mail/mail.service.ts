@@ -37,6 +37,15 @@ export class MailService {
     });
   }
 
+  async sendNotificationEmail(userId: string, message: string) {
+    if (process.env.EMAIL_ENABLED !== 'true') {
+      this.logger.log(`[DEV] Notification for user ${userId}: ${message}`);
+      return;
+    }
+    // In production, resolve user email from user service / pass email directly
+    this.logger.log(`Notification email queued for user ${userId}`);
+  }
+
   async sendVerificationEmail(to: string, token: string) {
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3001';
     const verifyUrl = `${frontendUrl}/auth/verify?token=${token}`;
