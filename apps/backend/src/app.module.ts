@@ -47,6 +47,7 @@ import { BookingsModule } from './bookings/bookings.module';
 import { GatewayModule } from './gateway/gateway.module';
 import { AdminModule } from './admin/admin.module';
 import { QueueModule } from './queue/queue.module';
+import { PaymentsModule } from './payments/payments.module';
 import { GatewayLoggingInterceptor } from './gateway/gateway.interceptor';
 import { WsGatewayModule } from './ws-gateway/ws-gateway.module';
 import { AppGraphQLModule } from './graphql/graphql.module';
@@ -145,6 +146,7 @@ import { validationSchema } from './config/validation.schema';
     GatewayModule,
     WsGatewayModule,
     AppGraphQLModule,
+    PaymentsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
