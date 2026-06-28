@@ -9,6 +9,7 @@ import { Enrollment } from '../enrollments/enrollment.entity';
 import { Progress } from '../progress/progress.entity';
 import { Review } from '../courses/review.entity';
 import { Course } from '../courses/course.entity';
+import { User } from '../users/user.entity';
 import { AnalyticsService } from './analytics.service';
 import { AnalyticsController } from './analytics.controller';
 import { EventsService } from './events.service';
@@ -16,6 +17,8 @@ import { PlatformAnalyticsService } from './platform-analytics.service';
 import { PlatformAnalyticsController } from './platform-analytics.controller';
 import { InstructorAnalyticsService } from './instructor-analytics.service';
 import { InstructorAnalyticsController } from './instructor-analytics.controller';
+import { AdminAnalyticsService } from './admin-analytics.service';
+import { AdminAnalyticsController } from './admin-analytics.controller';
 
 @Module({
   imports: [
@@ -29,10 +32,11 @@ import { InstructorAnalyticsController } from './instructor-analytics.controller
       PlatformAnalytics,
       InstructorAnalytics,
       Course,
+      User,
     ]),
   ],
-  providers: [AnalyticsService, EventsService, PlatformAnalyticsService, InstructorAnalyticsService],
-  controllers: [AnalyticsController, PlatformAnalyticsController, InstructorAnalyticsController],
-  exports: [AnalyticsService, EventsService, PlatformAnalyticsService, InstructorAnalyticsService],
+  providers: [AnalyticsService, EventsService, PlatformAnalyticsService, InstructorAnalyticsService, AdminAnalyticsService],
+  controllers: [AnalyticsController, PlatformAnalyticsController, InstructorAnalyticsController, AdminAnalyticsController],
+  exports: [AnalyticsService, EventsService, PlatformAnalyticsService, InstructorAnalyticsService, AdminAnalyticsService],
 })
 export class AnalyticsModule {}
