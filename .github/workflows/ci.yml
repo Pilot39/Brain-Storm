@@ -161,6 +161,41 @@ jobs:
         env:
           NEXT_PUBLIC_GIT_COMMIT_SHA: ${{ github.sha }}
 
+      - name: Check bundle size budget
+        run: |
+          FIRST_LOAD_KB=$(node -e "
+            const fs = require('fs');
+            const path = 'apps/frontend/.next/build-manifest.json';
+            if (!fs.existsSync(path)) { console.log('0'); process.exit(0); }
+            const manifest = JSON.parse(fs.readFileSync(path, 'utf8'));
+            const pages = manifest.pages || {};
+            const rootChunks = pages['/'] || [];
+            let totalBytes = 0;
+            rootChunks.forEach(chunk => {
+              const chunkPath = 'apps/frontend/.next/' + chunk;
+              if (fs.existsSync(chunkPath)) totalBytes += fs.statSync(chunkPath).size;
+            });
+            console.log(Math.round(totalBytes / 1024));
+          ")
+          echo "Initial route JS budget check: ${FIRST_LOAD_KB} KB"
+          echo "### Bundle Size Report" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Root route JS chunks | ${FIRST_LOAD_KB} KB |" >> $GITHUB_STEP_SUMMARY
+          if [ "$FIRST_LOAD_KB" -gt 500 ]; then
+            echo "::warning::Initial JS bundle exceeds 500 KB (${FIRST_LOAD_KB} KB). Review dynamic imports."
+          fi
+
+      - name: Upload build stats
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: next-build-stats
+          path: |
+            apps/frontend/.next/build-manifest.json
+            apps/frontend/.next/app-build-manifest.json
+          retention-days: 30
+
       - name: Run Pact consumer tests
         run: npm run test:pact --workspace=apps/frontend
         continue-on-error: true
