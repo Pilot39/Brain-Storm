@@ -109,6 +109,9 @@ export function scrubPII<T extends Record<string, unknown>>(payload: T): T {
   return scrubbed;
 }
 
+// Marketing events requiring special consent
+const MARKETING_EVENTS = ['tip_initiated', 'tip_sent'];
+
 /**
  * Consent gating - events should only be sent if user consented
  */
@@ -117,10 +120,9 @@ export interface ConsentState {
   marketing: boolean;
 }
 
-export function canSendEvent(consent: ConsentState, eventType: EventType): boolean {
+export function canSendEvent(consent: ConsentState, eventType: string): boolean {
   // Marketing events require marketing consent
-  const marketingEvents = [CORE_EVENTS.TIP_INITIATED, CORE_EVENTS.TIP_SENT];
-  if (marketingEvents.includes(eventType)) {
+  if (MARKETING_EVENTS.includes(eventType)) {
     return consent.marketing;
   }
   // All other events require basic analytics consent

@@ -1,9 +1,9 @@
-import { Injectable, OnEvent } from '@nestjs/event-emitter';
+import { Injectable, Logger } from '@nestjs/common';
+import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Logger } from '@nestjs/common';
 import { AnalyticsEvent } from './analytics-event.entity';
-import { scrubPII, canSendEvent, ConsentState, CORE_EVENTS } from './event-taxonomy';
+import { scrubPII, canSendEvent, ConsentState } from './event-taxonomy';
 
 @Injectable()
 export class EventsService {
@@ -44,8 +44,7 @@ export class EventsService {
       // Check consent if userId is provided
       if (userId) {
         const consent = this.getConsent(userId);
-        const eventType = event as keyof typeof CORE_EVENTS;
-        if (!canSendEvent(consent, eventType)) {
+        if (!canSendEvent(consent, event)) {
           this.logger.debug(`Event ${event} blocked due to consent`);
           return;
         }
