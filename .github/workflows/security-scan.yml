@@ -1,0 +1,152 @@
+name: Supply-Chain Security
+
+on:
+  push:
+    branches: [main, 'feature/**']
+  pull_request:
+    branches: [main]
+  schedule:
+    # Run weekly on Monday at 06:00 UTC
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: read
+  security-events: write
+  id-token: write
+
+jobs:
+  npm-audit:
+    name: npm audit (backend + frontend)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Node.js
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Audit backend (high severity gate)
+        run: npm audit --workspace=apps/backend --audit-level=high
+
+      - name: Audit frontend (high severity gate)
+        run: npm audit --workspace=apps/frontend --audit-level=high
+
+  trivy-image:
+    name: Trivy — container image scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Build backend image
+        run: docker build -t brain-storm-backend:ci apps/backend
+
+      - name: Run Trivy image scan
+        uses: aquasecurity/trivy-action@915b19bbe73b92a6cf82a1bc12b087c9a19a5fe8 # v0.28.0
+        with:
+          image-ref: brain-storm-backend:ci
+          format: sarif
+          output: trivy-image.sarif
+          exit-code: '1'
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+      - name: Upload Trivy SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@1b549b9259bda1cb5ddde3b41741a82a2d15a841 # v3.28.13
+        with:
+          sarif_file: trivy-image.sarif
+          category: trivy-image
+
+  grype-image:
+    name: Grype — container image scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Build backend image
+        run: docker build -t brain-storm-backend:ci apps/backend
+
+      - name: Run Grype image scan
+        uses: anchore/scan-action@7c751f3cdaf3f3285b7c4abb77a9f82d0b22e1de # v6.1.0
+        with:
+          image: brain-storm-backend:ci
+          fail-build: true
+          severity-cutoff: high
+          output-format: sarif
+
+      - name: Upload Grype SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@1b549b9259bda1cb5ddde3b41741a82a2d15a841 # v3.28.13
+        with:
+          sarif_file: results.sarif
+          category: grype-image
+
+  trivy-fs:
+    name: Trivy — filesystem / dependency scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@915b19bbe73b92a6cf82a1bc12b087c9a19a5fe8 # v0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: sarif
+          output: trivy-fs.sarif
+          exit-code: '1'
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+      - name: Upload Trivy fs SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@1b549b9259bda1cb5ddde3b41741a82a2d15a841 # v3.28.13
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-fs
+
+  sbom:
+    name: Generate SBOM
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Build backend image
+        run: docker build -t brain-storm-backend:ci apps/backend
+
+      # Syft SBOM for container image (CycloneDX JSON)
+      - name: Generate image SBOM (Syft)
+        uses: anchore/sbom-action@f325610c9f50a54015d37c8d16cb3b0e2c8f4de0 # v0.18.0
+        with:
+          image: brain-storm-backend:ci
+          format: cyclonedx-json
+          output-file: sbom-image.cdx.json
+          artifact-name: sbom-image.cdx.json
+
+      # Syft SBOM for source tree (SPDX JSON)
+      - name: Generate source SBOM (Syft)
+        uses: anchore/sbom-action@f325610c9f50a54015d37c8d16cb3b0e2c8f4de0 # v0.18.0
+        with:
+          path: .
+          format: spdx-json
+          output-file: sbom-source.spdx.json
+          artifact-name: sbom-source.spdx.json
+
+      - name: Upload SBOMs as artifacts
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: sboms
+          path: |
+            sbom-image.cdx.json
+            sbom-source.spdx.json
+          retention-days: 90
