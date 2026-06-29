@@ -13,6 +13,7 @@ import { MailService } from '../mail/mail.service';
 import { PasswordResetToken } from './password-reset-token.entity';
 import { RefreshToken } from './refresh-token.entity';
 import { ApiKey } from './api-key.entity';
+import { TokenBlacklistService } from './token-blacklist.service';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import { generateSecret, generateSync, verifySync, generateURI } from 'otplib';
@@ -35,6 +36,7 @@ export class AuthService {
     private apiKeyRepo: Repository<ApiKey>,
     private encryptionService: EncryptionService,
     private auditService: AuditService,
+    private tokenBlacklistService: TokenBlacklistService,
   ) {}
 
   async register(email: string, password: string, refCode?: string) {
@@ -135,7 +137,7 @@ export class AuthService {
     return this.issueTokenPair(user.id, user.email, user.role);
   }
 
-  async logout(rawRefreshToken: string, userId?: string) {
+  async logout(rawRefreshToken: string, userId?: string, accessToken?: string) {
     const hash = this.hashToken(rawRefreshToken);
     const stored = await this.refreshTokenRepo.findOne({
       where: { tokenHash: hash, revoked: false },
@@ -143,6 +145,20 @@ export class AuthService {
     if (stored) {
       await this.refreshTokenRepo.save({ ...stored, revoked: true });
     }
+
+    // Blacklist the access token if provided
+    if (accessToken && (userId || stored?.userId)) {
+      const decoded = this.jwtService.decode(accessToken) as any;
+      if (decoded?.exp) {
+        const expiresAt = new Date(decoded.exp * 1000);
+        await this.tokenBlacklistService.blacklistToken(
+          accessToken,
+          userId || stored?.userId || '',
+          expiresAt
+        );
+      }
+    }
+
     await this.auditService.log(AuditAction.LOGOUT, userId || stored?.userId || null, true);
     return { message: 'Logged out successfully.' };
   }

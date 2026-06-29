@@ -613,6 +613,106 @@ impl TokenContract {
     }
 
     // -------------------------------------------------------------------------
+    // Staking pool management
+    // -------------------------------------------------------------------------
+
+    /// Configure the staking reward rate (admin only). Rate is in basis points per ledger
+    /// e.g. 500 = 0.005% per ledger.
+    pub fn set_reward_rate(env: Env, admin: Address, rate: i128) {
+        admin.require_auth();
+        let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        assert!(admin == stored_admin, "Only admin can set reward rate");
+        assert!(rate >= 0, "Rate must be non-negative");
+        env.storage()
+            .instance()
+            .set(&staking::StakingKey::RewardRate, &rate);
+    }
+
+    /// Configure the early withdrawal penalty (admin only). Penalty in basis points.
+    pub fn set_early_withdrawal_penalty(env: Env, admin: Address, penalty: i128) {
+        admin.require_auth();
+        let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        assert!(admin == stored_admin, "Only admin can set penalty");
+        assert!(penalty >= 0 && penalty <= 10_000, "Penalty must be 0-10000 bps");
+        env.storage()
+            .instance()
+            .set(&staking::StakingKey::EarlyWithdrawalPenalty, &penalty);
+    }
+
+    /// Stake tokens. Locks `amount` from the caller's balance for `lock_periods`.
+    pub fn stake(env: Env, staker: Address, amount: i128, lock_periods: u32) {
+        assert!(amount > 0, "Stake amount must be positive");
+        let bal = Self::balance(env.clone(), staker.clone());
+        assert!(bal >= amount, "Insufficient balance to stake");
+
+        // Deduct from balance
+        Self::sub_balance(&env, &staker, amount);
+
+        staking::stake(&env, staker, amount, lock_periods);
+    }
+
+    /// Withdraw staked tokens. Pass `early = true` to withdraw before lock expiry (penalty applies).
+    pub fn unstake(env: Env, staker: Address, early: bool) {
+        let withdrawal_amount = staking::withdraw(&env, staker.clone(), early);
+        // Mint the withdrawal amount back to the staker
+        Self::add_balance(&env, &staker, withdrawal_amount);
+    }
+
+    /// Claim accumulated staking rewards without unstaking.
+    pub fn claim_staking_rewards(env: Env, staker: Address) {
+        let rewards = staking::claim_rewards(&env, staker.clone());
+        assert!(rewards > 0, "No rewards to claim");
+        Self::add_balance(&env, &staker, rewards);
+        Self::add_supply(&env, rewards);
+    }
+
+    /// Emergency withdrawal: admin can force-return staked tokens to a staker (no rewards, no penalty).
+    pub fn emergency_withdraw(env: Env, admin: Address, staker: Address) {
+        admin.require_auth();
+        let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        assert!(admin == stored_admin, "Only admin can emergency withdraw");
+
+        let record = staking::get_stake(&env, staker.clone())
+            .expect("No stake found for staker");
+
+        // Remove stake record and return principal only
+        env.storage()
+            .instance()
+            .remove(&staking::StakingKey::Stake(staker.clone()));
+
+        let total_staked: i128 = env
+            .storage()
+            .instance()
+            .get(&staking::StakingKey::TotalStaked)
+            .unwrap_or(0);
+        env.storage()
+            .instance()
+            .set(&staking::StakingKey::TotalStaked, &(total_staked - record.amount));
+
+        Self::add_balance(&env, &staker, record.amount);
+
+        env.events().publish(
+            (symbol_short!("emerg_wd"),),
+            (staker, record.amount),
+        );
+    }
+
+    /// Get a staker's current stake record.
+    pub fn get_stake(env: Env, staker: Address) -> Option<staking::StakeRecord> {
+        staking::get_stake(&env, staker)
+    }
+
+    /// Get total tokens currently staked in the pool.
+    pub fn get_total_staked(env: Env) -> i128 {
+        staking::get_total_staked(&env)
+    }
+
+    /// Calculate pending rewards for a staker without claiming.
+    pub fn get_pending_rewards(env: Env, staker: Address) -> i128 {
+        staking::calculate_rewards(&env, &staker)
+    }
+
+    // -------------------------------------------------------------------------
     // Legacy mint_reward (kept for backward compat)
     // -------------------------------------------------------------------------
 

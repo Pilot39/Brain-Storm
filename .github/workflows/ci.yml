@@ -31,6 +31,9 @@ jobs:
         run: npm run build --workspace=apps/backend
         env:
           GIT_COMMIT_SHA: ${{ github.sha }}
+      
+      - name: Check shared types
+        run: npm run type-check --workspace=packages/types
 
       - name: Run unit tests with coverage
         run: npx jest --coverage --passWithNoTests
@@ -38,6 +41,37 @@ jobs:
 
       - name: Run Pact provider verification
         run: npm run test:pact --workspace=apps/backend
+        continue-on-error: true
+
+  migration-validate:
+    name: Backend - Validate Migrations
+    runs-on: ubuntu-latest
+    needs: backend-test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build backend
+        run: npm run build --workspace=apps/backend
+
+      - name: Validate migration ordering
+        run: npm run migration:validate --workspace=apps/backend
+        env:
+          DATABASE_HOST: localhost
+          DATABASE_PORT: 5432
+          DATABASE_USER: brain-storm
+          DATABASE_PASSWORD: brain-storm
+          DATABASE_NAME: brain-storm
         continue-on-error: true
 
   backend-integration-test:
@@ -62,10 +96,41 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Run integration tests
-        run: npm run test:integration --workspace=apps/backend
+      - name: Run integration tests with coverage
+        run: npm run test:integration -- --coverage --coverageReporters=text --coverageReporters=json-summary
+        working-directory: apps/backend
         env:
           NODE_ENV: test
+      
+      - name: Upload integration test coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-integration-coverage
+          path: apps/backend/coverage/
+          retention-days: 7
+      
+      - name: Comment PR with coverage summary
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            try {
+              const coverage = JSON.parse(fs.readFileSync('apps/backend/coverage/coverage-summary.json', 'utf8'));
+              const total = coverage.total;
+              
+              const comment = `## 🧪 Integration Test Coverage\n\n| Metric | Coverage |\n|--------|----------|\n| Lines | ${total.lines.pct}% |\n| Statements | ${total.statements.pct}% |\n| Functions | ${total.functions.pct}% |\n| Branches | ${total.branches.pct}% |`;
+              
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: comment
+              });
+            } catch (e) {
+              console.log('Coverage summary not found');
+            }
 
   backend-soroban-test:
     name: Backend - Soroban Testnet Tests
@@ -129,6 +194,41 @@ jobs:
         run: npm run build --workspace=apps/frontend
         env:
           NEXT_PUBLIC_GIT_COMMIT_SHA: ${{ github.sha }}
+
+      - name: Check bundle size budget
+        run: |
+          FIRST_LOAD_KB=$(node -e "
+            const fs = require('fs');
+            const path = 'apps/frontend/.next/build-manifest.json';
+            if (!fs.existsSync(path)) { console.log('0'); process.exit(0); }
+            const manifest = JSON.parse(fs.readFileSync(path, 'utf8'));
+            const pages = manifest.pages || {};
+            const rootChunks = pages['/'] || [];
+            let totalBytes = 0;
+            rootChunks.forEach(chunk => {
+              const chunkPath = 'apps/frontend/.next/' + chunk;
+              if (fs.existsSync(chunkPath)) totalBytes += fs.statSync(chunkPath).size;
+            });
+            console.log(Math.round(totalBytes / 1024));
+          ")
+          echo "Initial route JS budget check: ${FIRST_LOAD_KB} KB"
+          echo "### Bundle Size Report" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Root route JS chunks | ${FIRST_LOAD_KB} KB |" >> $GITHUB_STEP_SUMMARY
+          if [ "$FIRST_LOAD_KB" -gt 500 ]; then
+            echo "::warning::Initial JS bundle exceeds 500 KB (${FIRST_LOAD_KB} KB). Review dynamic imports."
+          fi
+
+      - name: Upload build stats
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: next-build-stats
+          path: |
+            apps/frontend/.next/build-manifest.json
+            apps/frontend/.next/app-build-manifest.json
+          retention-days: 30
 
       - name: Run Pact consumer tests
         run: npm run test:pact --workspace=apps/frontend
@@ -503,3 +603,34 @@ jobs:
             exit 1
           fi
         continue-on-error: true
+
+  ci-summary:
+    name: CI Pipeline Summary
+    runs-on: ubuntu-latest
+    needs: [backend-test, frontend-build, contracts-check]
+    if: always()
+
+    steps:
+      - name: Generate CI summary
+        run: |
+          echo "## ✅ CI Pipeline Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Component | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Backend Tests | ${{ needs.backend-test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Frontend Build | ${{ needs.frontend-build.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Contract Tests | ${{ needs.contracts-check.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Quality Gates" >> $GITHUB_STEP_SUMMARY
+          echo "- Code Quality: Enforced via code-quality-gates workflow" >> $GITHUB_STEP_SUMMARY
+          echo "- Security: Enforced via security-scanning workflow" >> $GITHUB_STEP_SUMMARY
+          echo "- Performance: Monitored via performance-regression-testing workflow" >> $GITHUB_STEP_SUMMARY
+
+      - name: Fail if critical checks failed
+        if: |
+          needs.backend-test.result == 'failure' ||
+          needs.frontend-build.result == 'failure' ||
+          needs.contracts-check.result == 'failure'
+        run: |
+          echo "❌ CI pipeline failed - critical checks did not pass"
+          exit 1

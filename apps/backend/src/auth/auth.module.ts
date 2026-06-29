@@ -14,6 +14,8 @@ import { RolesGuard } from './roles.guard';
 import { PasswordResetToken } from './password-reset-token.entity';
 import { RefreshToken } from './refresh-token.entity';
 import { ApiKey } from './api-key.entity';
+import { TokenBlacklist } from './token-blacklist.entity';
+import { TokenBlacklistService } from './token-blacklist.service';
 import { EncryptionService } from '../common/encryption.service';
 import { ApiKeyStrategy } from './api-key.strategy';
 import { ApiKeyAuthGuard } from './api-key-auth.guard';
@@ -25,7 +27,7 @@ import { AuditModule } from '../audit/audit.module';
     MailModule,
     PassportModule,
     AuditModule,
-    TypeOrmModule.forFeature([PasswordResetToken, RefreshToken, ApiKey]),
+    TypeOrmModule.forFeature([PasswordResetToken, RefreshToken, ApiKey, TokenBlacklist]),
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -44,8 +46,9 @@ import { AuditModule } from '../audit/audit.module';
     EncryptionService,
     ApiKeyStrategy,
     ApiKeyAuthGuard,
+    TokenBlacklistService,
   ],
   controllers: [AuthController],
-  exports: [JwtAuthGuard, RolesGuard, ApiKeyAuthGuard],
+  exports: [JwtAuthGuard, RolesGuard, ApiKeyAuthGuard, TokenBlacklistService],
 })
 export class AuthModule {}

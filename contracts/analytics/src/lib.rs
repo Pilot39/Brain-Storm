@@ -16,6 +16,7 @@ pub enum DataKey {
     Admin,
     Progress(Address, Symbol),   // persistent: ProgressRecord
     StudentCourses(Address),     // persistent: Vec<Symbol> — secondary index
+    CourseStudents(Symbol),      // persistent: Vec<Address> — reverse index
     TotalStudents,
     TotalCourses,
     CompletionStats,
@@ -25,6 +26,7 @@ pub enum DataKey {
     TopPerformers,
     Milestone(Address, Symbol, u32), // (student, course, milestone_pct) → MilestoneRecord
     StudentMilestones(Address, Symbol), // (student, course) → Vec<u32> (achieved milestones)
+    AuthorizedCaller(Address),   // instance: bool — access control whitelist
 }
 
 // =============================================================================
@@ -106,11 +108,51 @@ impl AnalyticsContract {
     }
 
     // -------------------------------------------------------------------------
+    // Access controls — authorized callers
+    // -------------------------------------------------------------------------
+
+    /// Grant a contract/address permission to record progress on behalf of students.
+    pub fn authorize_caller(env: Env, admin: Address, caller: Address) {
+        admin.require_auth();
+        let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        assert!(admin == stored_admin, "Only admin can authorize callers");
+        env.storage()
+            .instance()
+            .set(&DataKey::AuthorizedCaller(caller.clone()), &true);
+        env.events().publish(
+            (symbol_short!("analytics"), symbol_short!("auth_add")),
+            caller,
+        );
+    }
+
+    /// Revoke a previously authorized caller.
+    pub fn revoke_caller(env: Env, admin: Address, caller: Address) {
+        admin.require_auth();
+        let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        assert!(admin == stored_admin, "Only admin can revoke callers");
+        env.storage()
+            .instance()
+            .remove(&DataKey::AuthorizedCaller(caller.clone()));
+        env.events().publish(
+            (symbol_short!("analytics"), symbol_short!("auth_rm")),
+            caller,
+        );
+    }
+
+    /// Check whether an address is an authorized caller.
+    pub fn is_authorized_caller(env: Env, caller: Address) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::AuthorizedCaller(caller))
+            .unwrap_or(false)
+    }
+
+    // -------------------------------------------------------------------------
     // Progress
     // -------------------------------------------------------------------------
 
     /// Record or update a student's course progress.
-    /// Callable by the student themselves OR the admin.
+    /// Callable by the student themselves, the admin, or an authorized caller.
     pub fn record_progress(
         env: Env,
         caller: Address,
@@ -120,9 +162,14 @@ impl AnalyticsContract {
     ) {
         caller.require_auth();
         let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        let is_authorized: bool = env
+            .storage()
+            .instance()
+            .get(&DataKey::AuthorizedCaller(caller.clone()))
+            .unwrap_or(false);
         assert!(
-            caller == student || caller == admin,
-            "Unauthorized: must be student or admin"
+            caller == student || caller == admin || is_authorized,
+            "Unauthorized: must be student, admin, or authorized caller"
         );
         assert!(progress_pct <= 100, "Progress must be 0-100");
 
@@ -156,6 +203,21 @@ impl AnalyticsContract {
         env.storage()
             .persistent()
             .extend_ttl(&index_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+
+        // Update reverse index: course → [students]
+        let course_index_key = DataKey::CourseStudents(course_id.clone());
+        let mut students: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&course_index_key)
+            .unwrap_or_else(|| vec![&env]);
+        if !students.contains(&student) {
+            students.push_back(student.clone());
+            env.storage().persistent().set(&course_index_key, &students);
+            env.storage()
+                .persistent()
+                .extend_ttl(&course_index_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        }
 
         // Check and record milestone achievements
         Self::check_milestones(&env, &student, &course_id, progress_pct);
@@ -377,7 +439,7 @@ impl AnalyticsContract {
         assert!(admin == stored_admin, "Only admin can update aggregates");
 
         // Update completion stats
-        let mut stats = CompletionStats {
+        let stats = CompletionStats {
             total_completions: 0,
             avg_completion_rate: 0,
         };
@@ -392,6 +454,65 @@ impl AnalyticsContract {
             (symbol_short!("analytics"), symbol_short!("agg_upd")),
             stats.total_completions,
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // Course-level aggregation queries
+    // -------------------------------------------------------------------------
+
+    /// Get all students enrolled in a course (via reverse index).
+    pub fn get_students_by_course(env: Env, course_id: Symbol) -> Vec<Address> {
+        let key = DataKey::CourseStudents(course_id);
+        match env.storage().persistent().get(&key) {
+            Some(students) => {
+                env.storage()
+                    .persistent()
+                    .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+                students
+            }
+            None => vec![&env],
+        }
+    }
+
+    /// Get all progress records for a specific course across all enrolled students.
+    pub fn get_course_progress(env: Env, course_id: Symbol) -> Vec<ProgressRecord> {
+        let students = Self::get_students_by_course(env.clone(), course_id.clone());
+        let mut results = vec![&env];
+        for student in students.iter() {
+            let key = DataKey::Progress(student.clone(), course_id.clone());
+            if let Some(record) = env.storage().persistent().get::<DataKey, ProgressRecord>(&key) {
+                env.storage()
+                    .persistent()
+                    .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+                results.push_back(record);
+            }
+        }
+        results
+    }
+
+    /// Get the number of students who completed a course.
+    pub fn get_course_completion_count(env: Env, course_id: Symbol) -> u32 {
+        let records = Self::get_course_progress(env, course_id);
+        let mut count: u32 = 0;
+        for record in records.iter() {
+            if record.completed {
+                count += 1;
+            }
+        }
+        count
+    }
+
+    /// Get the average progress percentage across all students in a course.
+    pub fn get_course_average_progress(env: Env, course_id: Symbol) -> u32 {
+        let records = Self::get_course_progress(env, course_id);
+        if records.len() == 0 {
+            return 0;
+        }
+        let mut total: u64 = 0;
+        for record in records.iter() {
+            total += record.progress_pct as u64;
+        }
+        (total / records.len() as u64) as u32
     }
 
     // -------------------------------------------------------------------------
@@ -488,6 +609,9 @@ impl AnalyticsContract {
 // =============================================================================
 // Tests
 // =============================================================================
+
+#[cfg(test)]
+mod fuzz_tests;
 
 #[cfg(test)]
 mod tests {

@@ -11,6 +11,7 @@ pub enum DataKey {
     RecipientCount(u64),
     RoyaltyBalance(Address),
     PaymentRecord(u64),
+    PaymentCount,
 }
 
 #[contracttype]
@@ -181,6 +182,25 @@ impl RoyaltyDistributionContract {
             .persistent()
             .set(&DataKey::RoyaltyBalance(platform), &platform_balance);
 
+        let payment_id: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::PaymentCount)
+            .unwrap_or(0);
+
+        let record = RoyaltyPayment {
+            course_id,
+            amount: total_amount,
+            timestamp: env.ledger().timestamp(),
+        };
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::PaymentRecord(payment_id), &record);
+        env.storage()
+            .instance()
+            .set(&DataKey::PaymentCount, &(payment_id + 1));
+
         env.events()
             .publish((DISTRIBUTE, symbol_short!("crs")), (course_id, total_amount));
     }
@@ -218,4 +238,44 @@ impl RoyaltyDistributionContract {
             .persistent()
             .get(&DataKey::RoyaltySplit(course_id))
     }
+
+    pub fn get_payment_record(env: Env, payment_id: u64) -> Option<RoyaltyPayment> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::PaymentRecord(payment_id))
+    }
+
+    pub fn get_payment_count(env: Env) -> u64 {
+        env.storage()
+            .instance()
+            .get(&DataKey::PaymentCount)
+            .unwrap_or(0)
+    }
+
+    pub fn get_total_distributed(env: Env, course_id: u64) -> i128 {
+        let count: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::PaymentCount)
+            .unwrap_or(0);
+
+        let mut total: i128 = 0;
+        let mut i: u64 = 0;
+        while i < count {
+            let record: Option<RoyaltyPayment> = env
+                .storage()
+                .persistent()
+                .get(&DataKey::PaymentRecord(i));
+            if let Some(r) = record {
+                if r.course_id == course_id {
+                    total += r.amount;
+                }
+            }
+            i += 1;
+        }
+        total
+    }
 }
+
+#[cfg(test)]
+mod tests;

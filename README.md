@@ -2,6 +2,12 @@
 
 > A blockchain education platform built on the **Stellar network**, delivering verifiable on-chain credentials and token-based learning incentives.
 
+[![CI](https://github.com/BrainTease/Brain-Storm/actions/workflows/ci.yml/badge.svg)](https://github.com/BrainTease/Brain-Storm/actions/workflows/ci.yml)
+[![Contracts](https://github.com/BrainTease/Brain-Storm/actions/workflows/contracts.yml/badge.svg)](https://github.com/BrainTease/Brain-Storm/actions/workflows/contracts.yml)
+[![Security Scanning](https://github.com/BrainTease/Brain-Storm/actions/workflows/security-scanning.yml/badge.svg)](https://github.com/BrainTease/Brain-Storm/actions/workflows/security-scanning.yml)
+[![Code Quality Gates](https://github.com/BrainTease/Brain-Storm/actions/workflows/code-quality-gates.yml/badge.svg)](https://github.com/BrainTease/Brain-Storm/actions/workflows/code-quality-gates.yml)
+[![Performance Regression Testing](https://github.com/BrainTease/Brain-Storm/actions/workflows/performance-regression-testing.yml/badge.svg)](https://github.com/BrainTease/Brain-Storm/actions/workflows/performance-regression-testing.yml)
+
 ---
 
 ## Overview
@@ -267,10 +273,10 @@ GitHub Actions workflows in `.github/workflows/` run on every push and PR:
 
 ## Stellar & Soroban Resources
 
-- [Stellar Documentation](https://developers.stellar.org)
-- [Soroban Smart Contracts](https://soroban.stellar.org)
-- [Stellar Laboratory](https://laboratory.stellar.org)
-- [Stellar Discord](https://discord.gg/stellardev)
+- [Stellar Documentation](https://developers.stellar.org),
+- [Soroban Smart Contracts](https://soroban.stellar.org),
+- [Stellar Laboratory](https://laboratory.stellar.org),
+- [Stellar Discord](https://discord.gg/stellardev).
 
 ---
 
@@ -281,3 +287,52 @@ MIT — see [LICENSE](./LICENSE) for details.
 ---
 
 *Built with ❤️ on the Stellar network. Inspired by [StrellerMinds](https://github.com/StarkMindsHQ) by StarkMindsHQ.*
+
+## Development Setup
+
+### Prerequisites
+
+- Rust stable (latest)
+- Soroban SDK v20.0.0+
+- Stellar CLI v20.0.0+
+
+### Installation
+
+```bash
+# Install Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# Install Soroban CLI
+cargo install soroban-cli
+
+# Install wasm-opt (optional, for optimization)
+# macOS
+brew install binaryen
+
+# Ubuntu
+sudo apt-get install binaryen
+# Build all contracts
+cargo build --target wasm32-unknown-unknown --release
+
+# Build specific contract
+cd stellar-contract
+cargo build --target wasm32-unknown-unknown --release
+# Deploy contract
+soroban contract deploy \
+    --wasm target/wasm32-unknown-unknown/release/scavenger_contract.wasm \
+    --network testnet \
+    --source-account $DEPLOYER_SECRET
+
+# Initialize contract
+soroban contract invoke \
+    --id CONTRACT_ID \
+    --network testnet \
+    --source-account $DEPLOYER_SECRET \
+    -- initialize \
+    --admin $ADMIN_ADDRESS
+# Deploy to mainnet
+soroban contract deploy \
+    --wasm target/wasm32-unknown-unknown/release/scavenger_contract.wasm \
+    --network mainnet \
+    --source-account $DEPLOYER_SECRET
+git status

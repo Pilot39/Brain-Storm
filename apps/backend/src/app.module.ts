@@ -1,11 +1,13 @@
-import { Module } from '@nestjs/common';
+import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ShutdownMiddleware } from './health/shutdown.middleware';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { CacheModule } from '@nestjs/cache-manager';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { SentryModule } from '@sentry/nestjs/setup';
 import { EventEmitterModule } from '@nestjs/event-emitter';
+import { ScheduleModule } from '@nestjs/schedule';
 import { AuthModule } from './auth/auth.module';
 import { CoursesModule } from './courses/courses.module';
 import { UsersModule } from './users/users.module';
@@ -28,6 +30,7 @@ import { ImportExportModule } from './import-export/import-export.module';
 import { SearchModule } from './search/search.module';
 import { BatchModule } from './batch/batch.module';
 import { ApiUsageModule } from './api-usage/api-usage.module';
+import { CacheManagementModule } from './cache/cache-management.module';
 import { ApiUsageInterceptor } from './api-usage/api-usage.interceptor';
 import { QuizzesModule } from './quizzes/quizzes.module';
 import { CohortsModule } from './cohorts/cohorts.module';
@@ -36,6 +39,18 @@ import { AccessControlModule } from './access-control/access-control.module';
 import { RateLimitModule } from './rate-limit/rate-limit.module';
 import { UserRateLimitGuard } from './rate-limit/user-rate-limit.guard';
 import { AuditModule } from './audit/audit.module';
+import { RemindersModule } from './reminders/reminders.module';
+import { CertificatesModule } from './certificates/certificates.module';
+import { PayoutsModule } from './payouts/payouts.module';
+import { GdprModule } from './gdpr/gdpr.module';
+import { BookingsModule } from './bookings/bookings.module';
+import { GatewayModule } from './gateway/gateway.module';
+import { AdminModule } from './admin/admin.module';
+import { QueueModule } from './queue/queue.module';
+import { PaymentsModule } from './payments/payments.module';
+import { GatewayLoggingInterceptor } from './gateway/gateway.interceptor';
+import { WsGatewayModule } from './ws-gateway/ws-gateway.module';
+import { AppGraphQLModule } from './graphql/graphql.module';
 import * as redisStore from 'cache-manager-redis-store';
 import { ThrottlerStorageRedisService } from '@nest-lab/throttler-storage-redis';
 import configuration from './config/configuration';
@@ -45,6 +60,7 @@ import { validationSchema } from './config/validation.schema';
   imports: [
     SentryModule.forRoot(),
     EventEmitterModule.forRoot(),
+    ScheduleModule.forRoot(),
     ConfigModule.forRoot({
       isGlobal: true,
       load: [configuration],
@@ -104,6 +120,8 @@ import { validationSchema } from './config/validation.schema';
     RemindersModule,
     CertificatesModule,
     PayoutsModule,
+    GdprModule,
+    BookingsModule,
     HealthModule,
     MetricsModule,
     KycModule,
@@ -117,16 +135,28 @@ import { validationSchema } from './config/validation.schema';
     BatchModule,
     ApiUsageModule,
     QuizzesModule,
+    CacheManagementModule,
     CohortsModule,
     CdnModule,
     AccessControlModule,
     RateLimitModule,
     AuditModule,
+    AdminModule,
+    QueueModule,
+    GatewayModule,
+    WsGatewayModule,
+    AppGraphQLModule,
+    PaymentsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: UserRateLimitGuard },
     { provide: APP_INTERCEPTOR, useClass: ApiUsageInterceptor },
+    { provide: APP_INTERCEPTOR, useClass: GatewayLoggingInterceptor },
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(ShutdownMiddleware).forRoutes('*');
+  }
+}

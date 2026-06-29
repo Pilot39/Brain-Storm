@@ -109,10 +109,10 @@ export class AuthController {
 
   @Post('logout')
   @ApiOperation({ summary: 'Logout and invalidate refresh token' })
-  @ApiBody({ schema: { example: { refresh_token: 'token' } } })
+  @ApiBody({ schema: { example: { refresh_token: 'token', access_token: 'jwt' } } })
   @ApiResponse({ status: 200, description: 'Logged out successfully' })
-  logout(@Body() dto: RefreshDto) {
-    return this.authService.logout(dto.refresh_token);
+  logout(@Body() dto: { refresh_token: string; access_token?: string }) {
+    return this.authService.logout(dto.refresh_token, undefined, dto.access_token);
   }
 
   @Get('verify')

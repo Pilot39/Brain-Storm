@@ -5,34 +5,60 @@ import {
   Query,
   Patch,
   Delete,
+  Post,
   Body,
   UseGuards,
   Request,
   ForbiddenException,
   NotFoundException,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { UsersService } from './users.service';
-import { ApiBearerAuth, ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBody,
+  ApiConsumes,
+} from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { StellarService } from '../stellar/stellar.service';
+import { CurrentUser } from '../auth/current-user.decorator';
 
 @ApiTags('users')
 @ApiBearerAuth()
-@Controller('users')
+@UseGuards(JwtAuthGuard)
+@Controller('v1/users')
 export class UsersController {
   constructor(
     private readonly usersService: UsersService,
     private readonly stellarService: StellarService
   ) {}
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('admin')
-  @Get('admin-only')
-  adminOnly() {
-    return { message: 'Admin access granted' };
+  @Get('me')
+  @ApiOperation({ summary: 'Get current user profile' })
+  @ApiResponse({
+    status: 200,
+    description: 'Returns current user data',
+    schema: {
+      example: {
+        id: 'uuid',
+        email: 'user@example.com',
+        username: 'username',
+        role: 'student',
+        createdAt: '2024-01-01T00:00:00.000Z',
+      },
+    },
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  getCurrentUser(@CurrentUser() user: any) {
+    return this.usersService.findById(user.id);
   }
 
   @Get(':id')
@@ -40,15 +66,98 @@ export class UsersController {
   @ApiResponse({
     status: 200,
     description: 'Returns user data',
-    schema: { example: { data: {}, statusCode: 200, timestamp: '2024-01-01T00:00:00.000Z' } },
+    schema: {
+      example: {
+        id: 'uuid',
+        email: 'user@example.com',
+        username: 'username',
+        role: 'student',
+        createdAt: '2024-01-01T00:00:00.000Z',
+      },
+    },
   })
   @ApiResponse({ status: 404, description: 'User not found' })
   findOne(@Param('id') id: string) {
     return this.usersService.findById(id);
   }
 
+  @Patch(':id')
+  @ApiOperation({ summary: 'Update user profile' })
+  @ApiResponse({
+    status: 200,
+    description: 'User updated successfully',
+    schema: { example: { id: 'uuid', email: 'user@example.com' } },
+  })
+  @ApiResponse({ status: 403, description: 'Forbidden - can only update own profile' })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  async update(
+    @Param('id') id: string,
+    @Body() dto: UpdateUserDto,
+    @CurrentUser() user: any
+  ) {
+    if (!this.usersService.canUpdateUser(user.id, id, user.role)) {
+      throw new ForbiddenException('You can only update your own profile');
+    }
+    return this.usersService.update(id, dto);
+  }
+
+  @Post('avatar')
+  @ApiOperation({ summary: 'Upload user avatar' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        file: { type: 'string', format: 'binary' },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Avatar uploaded successfully',
+    schema: { example: { avatarUrl: 'https://...' } },
+  })
+  @ApiResponse({ status: 400, description: 'Invalid file' })
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 5 * 1024 * 1024 } }))
+  async uploadAvatar(
+    @UploadedFile() file: Express.Multer.File,
+    @Request() req: { user: { id: string } }
+  ) {
+    if (!file) {
+      throw new NotFoundException('File is required');
+    }
+    return this.usersService.uploadAvatar(req.user.id, file);
+  }
+
+  @Get()
+  @UseGuards(RolesGuard)
+  @Roles('admin')
+  @ApiOperation({ summary: 'Search users with filtering' })
+  @ApiResponse({
+    status: 200,
+    description: 'List of users',
+    schema: {
+      example: {
+        data: [{ id: 'uuid', email: 'user@example.com' }],
+        meta: { total: 1, page: 1, limit: 10 },
+      },
+    },
+  })
+  searchUsers(
+    @Query('search') search?: string,
+    @Query('page') page?: number,
+    @Query('limit') limit?: number,
+    @Query('role') role?: string
+  ) {
+    return this.usersService.findAll({
+      search,
+      page: page ? Number(page) : 1,
+      limit: limit ? Number(limit) : 10,
+      role,
+    });
+  }
+
   @Get(':id/token-balance')
-  @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Get BST token balance for a user' })
   @ApiResponse({
     status: 200,
@@ -65,24 +174,10 @@ export class UsersController {
     return { balance, stellarPublicKey: user.stellarPublicKey };
   }
 
-  @UseGuards(JwtAuthGuard)
   @Get(':id/referrals')
   @ApiOperation({ summary: 'Get referral count and earned BST for a user' })
   getReferrals(@Param('id') id: string) {
     return this.usersService.getReferralStats(id);
-  }
-
-  @UseGuards(JwtAuthGuard)
-  @Patch(':id')
-  async update(
-    @Param('id') id: string,
-    @Body() dto: UpdateUserDto,
-    @Request() req: { user: { id: string } }
-  ) {
-    if (req.user.id !== id) {
-      throw new ForbiddenException('You can only update your own profile');
-    }
-    return this.usersService.update(id, dto);
   }
 }
 
@@ -123,6 +218,33 @@ export class AdminUsersController {
       isVerified: isVerified === 'true' ? true : isVerified === 'false' ? false : undefined,
       search,
     });
+  }
+
+  @Post('import/csv')
+  @Roles('admin')
+  @ApiOperation({ summary: 'Bulk import users from a CSV file' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        file: { type: 'string', format: 'binary' },
+      },
+    },
+  })
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 20 * 1024 * 1024 } }))
+  importUsers(@UploadedFile() file: Express.Multer.File, @Request() req: { user: { id: string } }) {
+    if (!file) {
+      throw new NotFoundException('CSV file is required for bulk import');
+    }
+    return this.usersService.bulkImportUsersCsv(file.buffer, req.user.id);
+  }
+
+  @Get('import-jobs/:jobId')
+  @Roles('admin')
+  @ApiOperation({ summary: 'Get bulk user import job status' })
+  getUserImportJob(@Param('jobId') jobId: string) {
+    return this.usersService.findImportJob(jobId);
   }
 
   @Patch(':id/role')

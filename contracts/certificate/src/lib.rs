@@ -14,6 +14,8 @@ pub enum DataKey {
     OwnerCertificates(Address),          // owner → Vec<u64>
     NextId,                              // u64 counter
     Revocation(u64),                     // id → RevocationRecord
+    Transferable(u64),                   // id → bool (opt-in transferability)
+    CertificateMetadata(u64),            // id → CertificateMetadata (extended metadata)
 }
 
 // =============================================================================
@@ -38,12 +40,24 @@ pub struct RevocationRecord {
     pub reason: String,
 }
 
+/// Extended on-chain metadata for a certificate (optional, set by admin).
+#[contracttype]
+#[derive(Clone)]
+pub struct CertificateMetadata {
+    pub certificate_id: u64,
+    pub issuer_name: String,
+    pub skills: String,       // comma-separated skill tags
+    pub grade: String,        // e.g. "A", "Pass", "Distinction"
+    pub expiry_timestamp: u64, // 0 = no expiry
+}
+
 // =============================================================================
 // Events
 // =============================================================================
 
 const MINT: Symbol = symbol_short!("mint");
 const REVOKE: Symbol = symbol_short!("revoke");
+const TRANSFER: Symbol = symbol_short!("transfer");
 
 // =============================================================================
 // Contract
@@ -195,17 +209,173 @@ impl CertificateContract {
     }
 
     // -------------------------------------------------------------------------
-    // Transfer (soulbound — panics)
+    // Transfer
     // -------------------------------------------------------------------------
 
-    pub fn transfer(_env: Env, _from: Address, _to: Address, _id: u64) {
-        panic!("soulbound");
+    /// Enable transferability for a specific certificate (admin only).
+    /// By default certificates are soulbound; this opt-in allows transfer.
+    pub fn enable_transfer(env: Env, admin: Address, cert_id: u64) {
+        admin.require_auth();
+        let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        assert!(admin == stored_admin, "Only admin can enable transfer");
+        assert!(
+            env.storage().persistent().has(&DataKey::Certificate(cert_id)),
+            "Certificate not found"
+        );
+        env.storage()
+            .persistent()
+            .set(&DataKey::Transferable(cert_id), &true);
+    }
+
+    /// Transfer a certificate from `from` to `to`.
+    /// Requires the certificate to have transferability enabled and not be revoked.
+    pub fn transfer(env: Env, from: Address, to: Address, cert_id: u64) {
+        from.require_auth();
+
+        let transferable: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Transferable(cert_id))
+            .unwrap_or(false);
+        assert!(transferable, "Certificate is soulbound and cannot be transferred");
+        assert!(
+            !env.storage().persistent().has(&DataKey::Revocation(cert_id)),
+            "Revoked certificate cannot be transferred"
+        );
+
+        let mut cert: CertificateRecord = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Certificate(cert_id))
+            .expect("Certificate not found");
+
+        assert!(cert.owner == from, "Caller is not the certificate owner");
+
+        // Remove from sender's list
+        let from_key = DataKey::OwnerCertificates(from.clone());
+        if let Some(mut ids) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, soroban_sdk::Vec<u64>>(&from_key)
+        {
+            let pos = ids.iter().position(|id| id == cert_id);
+            if let Some(i) = pos {
+                ids.remove(i as u32);
+                env.storage().persistent().set(&from_key, &ids);
+            }
+        }
+
+        // Add to recipient's list
+        let to_key = DataKey::OwnerCertificates(to.clone());
+        let mut to_ids: soroban_sdk::Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&to_key)
+            .unwrap_or_else(|| soroban_sdk::vec![&env]);
+        to_ids.push_back(cert_id);
+        env.storage().persistent().set(&to_key, &to_ids);
+
+        // Update owner
+        cert.owner = to.clone();
+        env.storage()
+            .persistent()
+            .set(&DataKey::Certificate(cert_id), &cert);
+
+        env.events()
+            .publish((TRANSFER, symbol_short!("from"), from), (to, cert_id));
+    }
+
+    // -------------------------------------------------------------------------
+    // Metadata storage
+    // -------------------------------------------------------------------------
+
+    /// Store extended metadata for a certificate (admin only).
+    pub fn set_metadata(
+        env: Env,
+        admin: Address,
+        cert_id: u64,
+        issuer_name: String,
+        skills: String,
+        grade: String,
+        expiry_timestamp: u64,
+    ) {
+        admin.require_auth();
+        let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        assert!(admin == stored_admin, "Only admin can set metadata");
+        assert!(
+            env.storage().persistent().has(&DataKey::Certificate(cert_id)),
+            "Certificate not found"
+        );
+
+        let metadata = CertificateMetadata {
+            certificate_id: cert_id,
+            issuer_name,
+            skills,
+            grade,
+            expiry_timestamp,
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::CertificateMetadata(cert_id), &metadata);
+    }
+
+    pub fn get_metadata(env: Env, cert_id: u64) -> Option<CertificateMetadata> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::CertificateMetadata(cert_id))
+    }
+
+    // -------------------------------------------------------------------------
+    // Queries
+    // -------------------------------------------------------------------------
+
+    /// Check whether a certificate is valid (exists, not revoked, not expired).
+    pub fn is_valid(env: Env, cert_id: u64) -> bool {
+        if !env.storage().persistent().has(&DataKey::Certificate(cert_id)) {
+            return false;
+        }
+        if env.storage().persistent().has(&DataKey::Revocation(cert_id)) {
+            return false;
+        }
+        // Check expiry if metadata exists
+        if let Some(meta) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, CertificateMetadata>(&DataKey::CertificateMetadata(cert_id))
+        {
+            if meta.expiry_timestamp > 0 && env.ledger().timestamp() > meta.expiry_timestamp {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Count certificates owned by an address.
+    pub fn count_certificates(env: Env, owner: Address) -> u32 {
+        let key = DataKey::OwnerCertificates(owner);
+        let ids: soroban_sdk::Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| soroban_sdk::vec![&env]);
+        ids.len() as u32
+    }
+
+    /// Check whether a certificate is transferable.
+    pub fn is_transferable(env: Env, cert_id: u64) -> bool {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Transferable(cert_id))
+            .unwrap_or(false)
     }
 }
 
 // =============================================================================
 // Tests
 // =============================================================================
+
+#[cfg(test)]
+mod fuzz_tests;
 
 #[cfg(test)]
 mod tests {
@@ -302,7 +472,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "soulbound")]
+    #[should_panic(expected = "Certificate is soulbound and cannot be transferred")]
     fn test_transfer_panics() {
         let (env, client, admin) = setup();
         let owner = Address::generate(&env);

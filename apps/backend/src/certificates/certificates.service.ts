@@ -1,11 +1,16 @@
-import { Injectable, Logger, BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  BadRequestException,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import * as crypto from 'crypto';
 import { Certificate } from './certificate.entity';
 import { Enrollment } from '../enrollments/enrollment.entity';
 import { StellarService } from '../stellar/stellar.service';
-import { ConfigService } from '@nestjs/config';
-import * as crypto from 'crypto';
+import { IssueCertificateDto } from './dto/issue-certificate.dto';
 
 @Injectable()
 export class CertificatesService {
@@ -13,83 +18,87 @@ export class CertificatesService {
 
   constructor(
     @InjectRepository(Certificate)
-    private certificatesRepository: Repository<Certificate>,
+    private readonly repo: Repository<Certificate>,
     @InjectRepository(Enrollment)
-    private enrollmentsRepository: Repository<Enrollment>,
-    private stellarService: StellarService,
-    private configService: ConfigService,
+    private readonly enrollmentsRepo: Repository<Enrollment>,
+    private readonly stellarService: StellarService,
   ) {}
 
-  async issueCertificate(userId: string, courseId: string): Promise<Certificate> {
-    const enrollment = await this.enrollmentsRepository.findOne({
-      where: { userId, courseId, completedAt: null },
+  async issueCertificate(dto: IssueCertificateDto): Promise<Certificate> {
+    const { userId, courseId } = dto;
+
+    const enrollment = await this.enrollmentsRepo.findOne({
+      where: { userId, courseId },
       relations: ['user', 'course'],
     });
 
     if (!enrollment) {
-      throw new BadRequestException('Enrollment not found or course not completed');
+      throw new BadRequestException('Enrollment not found for this user and course');
     }
 
-    const existingCert = await this.certificatesRepository.findOne({
-      where: { userId, courseId },
-    });
+    if (!enrollment.completedAt) {
+      throw new BadRequestException('Course has not been completed yet');
+    }
 
-    if (existingCert) {
+    const existing = await this.repo.findOne({ where: { userId, courseId } });
+    if (existing) {
       throw new BadRequestException('Certificate already issued for this course');
     }
 
-    const certificateHash = this.generateCertificateHash(userId, courseId);
-    const certificate = this.certificatesRepository.create({
+    const certificateHash = this.generateHash(userId, courseId);
+    const certificate = this.repo.create({
       userId,
       courseId,
       certificateHash,
       status: 'pending',
     });
-
-    const saved = await this.certificatesRepository.save(certificate);
+    const saved = await this.repo.save(certificate);
 
     try {
-      const txId = await this.stellarService.mintCertificateNFT(
-        enrollment.user.stellarPublicKey,
-        certificateHash,
-        enrollment.course.title,
-      );
-
-      saved.stellarTransactionId = txId;
-      saved.status = 'minted';
-      await this.certificatesRepository.save(saved);
-      this.logger.log(`Certificate minted for user ${userId} on course ${courseId}`);
+      const stellarPublicKey = enrollment.user?.stellarPublicKey;
+      if (stellarPublicKey) {
+        const txId = await this.stellarService.issueCredential(
+          stellarPublicKey,
+          courseId,
+        );
+        saved.stellarTransactionId = txId;
+        saved.status = 'minted';
+        await this.repo.save(saved);
+      }
+      this.logger.log(`Certificate issued for user ${userId}, course ${courseId}`);
     } catch (error) {
-      this.logger.error(`Failed to mint certificate: ${error.message}`);
+      this.logger.error(`Stellar minting failed: ${error.message}`);
     }
 
     return saved;
   }
 
   async getCertificate(id: string): Promise<Certificate> {
-    const cert = await this.certificatesRepository.findOne({ where: { id } });
-    if (!cert) {
-      throw new NotFoundException('Certificate not found');
-    }
+    const cert = await this.repo.findOne({
+      where: { id },
+      relations: ['user', 'course'],
+    });
+    if (!cert) throw new NotFoundException('Certificate not found');
     return cert;
   }
 
   async getUserCertificates(userId: string): Promise<Certificate[]> {
-    return this.certificatesRepository.find({
+    return this.repo.find({
       where: { userId },
       relations: ['course'],
+      order: { issuedAt: 'DESC' },
     });
   }
 
-  async verifyCertificate(certificateHash: string): Promise<{ valid: boolean; certificate?: Certificate }> {
-    const cert = await this.certificatesRepository.findOne({
+  async verifyCertificate(
+    certificateHash: string,
+  ): Promise<{ valid: boolean; certificate?: Certificate }> {
+    const cert = await this.repo.findOne({
       where: { certificateHash },
       relations: ['user', 'course'],
     });
 
-    if (!cert) {
-      return { valid: false };
-    }
+    if (!cert) return { valid: false };
 
     return {
       valid: cert.status === 'minted' || cert.status === 'verified',
@@ -97,8 +106,10 @@ export class CertificatesService {
     };
   }
 
-  private generateCertificateHash(userId: string, courseId: string): string {
-    const data = `${userId}:${courseId}:${Date.now()}`;
-    return crypto.createHash('sha256').update(data).digest('hex');
+  private generateHash(userId: string, courseId: string): string {
+    return crypto
+      .createHash('sha256')
+      .update(`${userId}:${courseId}:${Date.now()}`)
+      .digest('hex');
   }
 }

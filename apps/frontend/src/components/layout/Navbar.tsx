@@ -1,12 +1,18 @@
 'use client';
 
 import { useState } from 'react';
+import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
 import { useNotifications } from '@/hooks/useNotifications';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { LanguageSwitcher } from '@/components/LanguageSwitcher';
+
+const WalletButton = dynamic(
+  () => import('@/components/wallet/WalletButton').then((m) => ({ default: m.WalletButton })),
+  { ssr: false, loading: () => <div className="w-28 h-9 rounded-lg animate-pulse bg-gray-200 dark:bg-gray-700" /> },
+);
 
 export function Navbar() {
   const pathname = usePathname();
@@ -40,6 +46,24 @@ export function Navbar() {
           Dashboard
         </Link>
       )}
+      <Link
+        href="/leaderboard"
+        aria-current={pathname.endsWith('/leaderboard') ? 'page' : undefined}
+        className={`text-sm transition-colors ${isActive('/leaderboard')}`}
+        onClick={() => setMenuOpen(false)}
+      >
+        Leaderboard
+      </Link>
+      {isAuthenticated && (
+        <Link
+          href="/cohorts"
+          aria-current={pathname.endsWith('/cohorts') ? 'page' : undefined}
+          className={`text-sm transition-colors ${isActive('/cohorts')}`}
+          onClick={() => setMenuOpen(false)}
+        >
+          Cohorts
+        </Link>
+      )}
     </>
   );
 
@@ -59,6 +83,7 @@ export function Navbar() {
           {navLinks}
           <LanguageSwitcher />
           <ThemeToggle />
+          <WalletButton />
           {isAuthenticated && user ? (
             <div className="flex items-center gap-2">
               {/* Notification bell */}
