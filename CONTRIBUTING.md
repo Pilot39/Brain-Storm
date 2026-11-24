@@ -221,6 +221,82 @@ cd apps/backend && npm test
 npm run lint
 ```
 
+### Integration Tests
+
+We have multiple types of integration tests to ensure API reliability:
+
+#### HTTP Integration Tests (Auth + Users)
+
+HTTP-layer integration tests use **supertest** and **testcontainers** to test auth and users API endpoints with a real PostgreSQL test database. Tests are deterministic and isolated with clean database state per test.
+
+```bash
+# Run HTTP integration tests
+cd apps/backend
+npm run test:http-integration
+
+# Run with coverage
+npm run test:http-integration:coverage
+
+# Validate test determinism (runs 20 times)
+npm run test:http-integration:determinism
+```
+
+**Test files:**
+- `src/auth/auth.controller.http-spec.ts` - Auth endpoint tests (register, login, refresh, logout, etc.)
+- `src/users/users.controller.http-spec.ts` - Users endpoint tests (profile CRUD, authorization)
+
+**Test infrastructure:**
+- `jest-http-integration.config.js` - Jest configuration for HTTP tests
+- `src/test/http-integration-setup.ts` - Test database setup with testcontainers
+- `src/test/http-fixtures.ts` - Shared test data and fixtures
+- `src/test/http-test-helpers.ts` - Helper functions for auth, cleanup, assertions
+
+**Writing new HTTP integration tests:**
+
+1. Create a `*.http-spec.ts` file next to your controller
+2. Use test fixtures from `src/test/http-fixtures.ts`
+3. Use helper functions from `src/test/http-test-helpers.ts`
+4. Clean database state in `beforeEach` hook
+5. Test success paths, error paths, and edge cases
+6. Verify authorization and access control
+
+**Example:**
+
+```typescript
+import { registerUser, cleanDatabase } from '../test/http-test-helpers';
+import { generateTestUser } from '../test/http-fixtures';
+import { getTestDataSource } from '../test/http-integration-setup';
+
+describe('MyController (HTTP Integration)', () => {
+  beforeEach(async () => {
+    await cleanDatabase(getTestDataSource());
+  });
+
+  it('should perform action with authentication', async () => {
+    const userData = generateTestUser();
+    const { accessToken } = await registerUser(app, userData);
+
+    const response = await request(app.getHttpServer())
+      .get('/my-endpoint')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .expect(200);
+
+    expect(response.body).toHaveProperty('data');
+  });
+});
+```
+
+#### Other Integration Tests
+
+```bash
+# Service-layer integration tests
+cd apps/backend
+npm run test:integration
+
+# Contract integration tests
+npm run test:contract-integration
+```
+
 ### Flaky test reruns
 
 Run the frontend or backend unit suite 20 consecutive times to identify flakes:
@@ -234,6 +310,36 @@ Set `TEST_RERUN_COUNT` to override the default 20 runs. The rerun summary is
 written to `test-results/rerun-report.json` and `test-results/rerun-report.md`.
 If any run fails, investigate it instead of adding a retry by default. Keep
 quarantined tests isolated and documented until the root cause is fixed.
+
+For the enrollment-to-course-completion Playwright journey, use a test database
+with migrations applied and the basic course catalogue seeded, then run the
+journey 20 consecutive times:
+
+```bash
+npm run migration:run --workspace=apps/backend
+npm run seed:basic --workspace=apps/backend
+npm run test:e2e:enrollment:stable --workspace=apps/frontend
+```
+
+The E2E workflow performs the same migration and seed setup before running the
+browser suite.
+
+Run the escrow/token/market Soroban integration flow with
+`cargo test --manifest-path contracts/integration/Cargo.toml --test
+market_escrow_flow -- --test-threads=1`. For 20 consecutive runs, use
+`node scripts/test-rerun-report.mjs cargo test --manifest-path
+contracts/integration/Cargo.toml --test market_escrow_flow`.
+
+Database migration up/down integration tests require Docker:
+`npm run test:migration-integration --workspace=apps/backend`. To run the
+round-trip 20 times, use
+`node scripts/test-rerun-report.mjs npm run test:migration-integration --workspace=apps/backend`.
+
+Credential issuance, listing, and public verification integration tests run
+without an external service: `npm run test:credential-integration
+--workspace=apps/backend`. To run them 20 consecutive times, use
+`node scripts/test-rerun-report.mjs npm run test:credential-integration
+--workspace=apps/backend`.
 
 ### Snapshot hygiene
 
